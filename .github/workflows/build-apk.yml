@@ -19,26 +19,55 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
-
+      # ubuntu-latest 內建 Android SDK，不需要額外 action
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "/usr/local/lib/android/sdk/platform-tools" >> $GITHUB_PATH
+          echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          # 安裝 build-tools 和 platform 34
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            --sdk_root=/usr/local/lib/android/sdk 2>/dev/null || true
+          echo "Android SDK ready"
+
+      - name: Generate Gradle Wrapper
+        run: |
+          # 下載 Gradle 8.4 並生成 wrapper
+          wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/
+          /tmp/gradle-8.4/bin/gradle wrapper --gradle-version 8.4 --distribution-type bin
+          chmod +x gradlew
+          echo "Gradle wrapper generated"
 
       - name: Copy icons to mipmap
         run: |
-          for density in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            mkdir -p app/src/main/res/$density
+          for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p app/src/main/res/$d
           done
-          # 下載 icon 或 fallback 用純色方塊
-          curl -sf -o /tmp/icon.png https://btryit123.zeabur.app/icons/icon-512.png || \
-            convert -size 512x512 xc:#9333ea /tmp/icon.png
-          for density in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            cp /tmp/icon.png app/src/main/res/$density/ic_launcher.png
-            cp /tmp/icon.png app/src/main/res/$density/ic_launcher_round.png
+          # 從已部署的 backend 下載圖示，失敗則用 ImageMagick 生成
+          curl -sf -o /tmp/icon.png https://btryit123.zeabur.app/icons/icon-512.png \
+            || convert -size 512x512 xc:#9333ea /tmp/icon.png \
+            || python3 -c "
+import struct, zlib
+def make_png(size, r, g, b):
+    sig = bytes([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])
+    def chunk(t, d):
+        c = zlib.crc32(t+d)&0xFFFFFFFF
+        return struct.pack('>I',len(d))+t+d+struct.pack('>I',c)
+    ihdr = struct.pack('>IIBBBBB',size,size,8,2,0,0,0)
+    raw = b''.join(bytes([0]+[r,g,b]*size) for _ in range(size))
+    return sig+chunk(b'IHDR',ihdr)+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+open('/tmp/icon.png','wb').write(make_png(192,147,51,234))
+"
+          for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            cp /tmp/icon.png app/src/main/res/$d/ic_launcher.png
+            cp /tmp/icon.png app/src/main/res/$d/ic_launcher_round.png
           done
+          echo "Icons ready"
 
       - name: Create or Restore Keystore
         run: |
@@ -52,28 +81,28 @@ jobs:
               -keystore app/release.keystore -alias doremi-ktv \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=DoReMi KTV, O=DoReMi, C=TW" \
-              -storepass doremi123 -keypass doremi123
+              -storepass doremi123 -keypass doremi123 2>/dev/null
             echo "KS_PASS=doremi123" >> $GITHUB_ENV
             echo "KEY_ALIAS=doremi-ktv" >> $GITHUB_ENV
             echo "KEY_PASS=doremi123" >> $GITHUB_ENV
           fi
+          echo "Keystore ready"
 
       - name: Print SHA-256 fingerprint
         run: |
-          echo "=== SHA-256 Fingerprint (填入 Zeabur APK_SHA256 環境變數) ==="
+          echo "=== SHA-256 Fingerprint (填入 Zeabur APK_SHA256) ==="
           keytool -list -v -keystore app/release.keystore \
             -alias ${{ env.KEY_ALIAS }} -storepass ${{ env.KS_PASS }} 2>/dev/null \
             | grep "SHA256:"
 
       - name: Build Release APK
-        working-directory: ${{ github.workspace }}
-        run: gradle assembleRelease
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
         env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
           KEYSTORE_PATH: release.keystore
           KEYSTORE_PASSWORD: ${{ env.KS_PASS }}
           KEY_ALIAS: ${{ env.KEY_ALIAS }}
           KEY_PASSWORD: ${{ env.KEY_PASS }}
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -87,6 +116,4 @@ jobs:
           echo "## ✅ APK Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "**Version**: 1.0.0 (build #${{ github.run_number }})" >> $GITHUB_STEP_SUMMARY
           echo "**Download**: Actions → Artifacts → DoReMi-KTV-v${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 下一步：設定 assetlinks.json" >> $GITHUB_STEP_SUMMARY
-          echo "將上方 SHA256 fingerprint 複製到 Zeabur 環境變數 \`APK_SHA256\`" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA256**: 請從上方 Print SHA-256 fingerprint 步驟複製" >> $GITHUB_STEP_SUMMARY
