@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DoReMi 點歌</string>
-    <string name="default_url">https://btryit123.zeabur.app/remote</string>
+    <string name="default_url">https://doremi-ktv.zeabur.app/remote</string>
 </resources>

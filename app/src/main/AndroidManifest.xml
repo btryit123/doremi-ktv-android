@@ -56,7 +56,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="btryit123.zeabur.app"
+                    android:host="doremi-ktv.zeabur.app"
                     android:pathPrefix="/remote" />
             </intent-filter>
 
