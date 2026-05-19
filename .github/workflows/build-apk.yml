@@ -72,18 +72,35 @@ jobs:
           chmod +x /tmp/gradle-8.4/bin/gradle
           echo "GRADLE_BIN=/tmp/gradle-8.4/bin/gradle" >> $GITHUB_ENV
 
-      # ── Icons ─────────────────────────────────────────────────
+      # ── Icons（用 Python 生成，確保 PNG 格式有效）──────────────
       - name: Prepare icons
         run: |
-          for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            mkdir -p app/src/main/res/$d
-          done
-          curl -sf -o /tmp/icon.png https://btryit123.zeabur.app/icons/icon-512.png \
-            || convert -size 192x192 xc:#9333ea /tmp/icon.png
-          for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            cp /tmp/icon.png app/src/main/res/$d/ic_launcher.png
-            cp /tmp/icon.png app/src/main/res/$d/ic_launcher_round.png
-          done
+          python3 - <<'PYEOF'
+          import struct, zlib, os
+
+          def make_chunk(tag, data):
+              crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+              return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', crc)
+
+          def make_png(size, r, g, b):
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr = make_chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+              raw  = b''.join(bytes([0, r, g, b] * 1 + [r, g, b] * (size - 1) + [0] * 0)
+                              for _ in range(size))
+              raw  = b''.join(bytes([0]) + bytes([r, g, b] * size) for _ in range(size))
+              idat = make_chunk(b'IDAT', zlib.compress(raw))
+              iend = make_chunk(b'IEND', b'')
+              return sig + ihdr + idat + iend
+
+          png = make_png(192, 147, 51, 234)   # purple #9333ea
+          for d in ['mipmap-hdpi','mipmap-xhdpi','mipmap-xxhdpi','mipmap-xxxhdpi']:
+              os.makedirs(f'app/src/main/res/{d}', exist_ok=True)
+              for name in ['ic_launcher.png', 'ic_launcher_round.png']:
+                  with open(f'app/src/main/res/{d}/{name}', 'wb') as f:
+                      f.write(png)
+
+          print("Icons generated OK")
+          PYEOF
 
       # ── Keystore ──────────────────────────────────────────────
       - name: Prepare keystore
