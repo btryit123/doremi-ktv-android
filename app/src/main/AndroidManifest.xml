@@ -57,7 +57,7 @@
                 <data
                     android:scheme="https"
                     android:host="doremi-ktv.zeabur.app"
-                    android:pathPrefix="/remote" />
+                    android:pathPrefix="/host" />
             </intent-filter>
 
         </activity>
