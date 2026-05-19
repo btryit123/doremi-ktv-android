@@ -105,21 +105,10 @@ jobs:
       # ── Keystore ──────────────────────────────────────────────
       - name: Prepare keystore
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
-            echo "KS_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"        >> $GITHUB_ENV
-            echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}"      >> $GITHUB_ENV
-          else
-            keytool -genkeypair -v \
-              -keystore app/release.keystore -alias doremi-ktv \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=DoReMi KTV, O=DoReMi, C=TW" \
-              -storepass doremi123 -keypass doremi123 2>/dev/null
-            echo "KS_PASS=doremi123"    >> $GITHUB_ENV
-            echo "KEY_ALIAS=doremi-ktv" >> $GITHUB_ENV
-            echo "KEY_PASS=doremi123"   >> $GITHUB_ENV
-          fi
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+          echo "KS_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"        >> $GITHUB_ENV
+          echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}"      >> $GITHUB_ENV
 
       - name: Print SHA-256 fingerprint
         run: |
