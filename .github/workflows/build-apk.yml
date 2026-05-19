@@ -1,0 +1,92 @@
+name: Build DoReMi APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Copy icons to mipmap
+        run: |
+          for density in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p app/src/main/res/$density
+          done
+          # 下載 icon 或 fallback 用純色方塊
+          curl -sf -o /tmp/icon.png https://btryit123.zeabur.app/icons/icon-512.png || \
+            convert -size 512x512 xc:#9333ea /tmp/icon.png
+          for density in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            cp /tmp/icon.png app/src/main/res/$density/ic_launcher.png
+            cp /tmp/icon.png app/src/main/res/$density/ic_launcher_round.png
+          done
+
+      - name: Create or Restore Keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+            echo "KS_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          else
+            keytool -genkeypair -v \
+              -keystore app/release.keystore -alias doremi-ktv \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=DoReMi KTV, O=DoReMi, C=TW" \
+              -storepass doremi123 -keypass doremi123
+            echo "KS_PASS=doremi123" >> $GITHUB_ENV
+            echo "KEY_ALIAS=doremi-ktv" >> $GITHUB_ENV
+            echo "KEY_PASS=doremi123" >> $GITHUB_ENV
+          fi
+
+      - name: Print SHA-256 fingerprint
+        run: |
+          echo "=== SHA-256 Fingerprint (填入 Zeabur APK_SHA256 環境變數) ==="
+          keytool -list -v -keystore app/release.keystore \
+            -alias ${{ env.KEY_ALIAS }} -storepass ${{ env.KS_PASS }} 2>/dev/null \
+            | grep "SHA256:"
+
+      - name: Build Release APK
+        working-directory: ${{ github.workspace }}
+        run: gradle assembleRelease
+        env:
+          KEYSTORE_PATH: release.keystore
+          KEYSTORE_PASSWORD: ${{ env.KS_PASS }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.KEY_PASS }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoReMi-KTV-v${{ github.run_number }}
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 90
+
+      - name: Summary
+        run: |
+          echo "## ✅ APK Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: 1.0.0 (build #${{ github.run_number }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Download**: Actions → Artifacts → DoReMi-KTV-v${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 下一步：設定 assetlinks.json" >> $GITHUB_STEP_SUMMARY
+          echo "將上方 SHA256 fingerprint 複製到 Zeabur 環境變數 \`APK_SHA256\`" >> $GITHUB_STEP_SUMMARY
