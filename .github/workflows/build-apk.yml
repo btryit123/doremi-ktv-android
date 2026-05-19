@@ -9,10 +9,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
       - uses: actions/checkout@v4
 
@@ -21,34 +17,67 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ── 1. Android SDK 環境 ──────────────────────────────────────
-      - name: Prepare Android SDK
+      # ── 診斷：印出環境資訊 ─────────────────────────────────────
+      - name: Diagnose environment
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          # Accept licenses silently
-          yes | sdkmanager --licenses --sdk_root=$ANDROID_HOME 2>/dev/null || true
-          # Ensure platform 34 and build-tools 34 exist
-          sdkmanager --sdk_root=$ANDROID_HOME \
-            "platforms;android-34" \
-            "build-tools;34.0.0" 2>/dev/null || true
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "=== Java ==="
+          java -version
+          echo "=== ANDROID_HOME ==="
+          echo "${ANDROID_HOME:-NOT SET}"
+          echo "${ANDROID_SDK_ROOT:-NOT SET}"
+          echo "=== SDK dir ==="
+          ls /usr/local/lib/android/sdk 2>/dev/null || echo "SDK dir not found at /usr/local/lib/android/sdk"
+          ls /home/runner/android-sdk 2>/dev/null || true
+          echo "=== sdkmanager ==="
+          find /usr/local/lib/android -name sdkmanager 2>/dev/null | head -3
+          echo "=== platforms ==="
+          ls /usr/local/lib/android/sdk/platforms 2>/dev/null || echo "no platforms dir"
+          echo "=== build-tools ==="
+          ls /usr/local/lib/android/sdk/build-tools 2>/dev/null || echo "no build-tools dir"
 
-      # ── 2. 取得 Gradle 8.4 ──────────────────────────────────────
+      # ── Android SDK ────────────────────────────────────────────
+      - name: Setup Android SDK
+        run: |
+          # 找出真正的 SDK 路徑
+          SDK=""
+          for path in \
+            "/usr/local/lib/android/sdk" \
+            "$ANDROID_HOME" \
+            "$ANDROID_SDK_ROOT" \
+            "/home/runner/android-sdk"; do
+            if [ -d "$path/platforms" ] || [ -d "$path/platform-tools" ]; then
+              SDK="$path"
+              break
+            fi
+          done
+          if [ -z "$SDK" ]; then
+            echo "ERROR: Cannot find Android SDK" && exit 1
+          fi
+          echo "Found Android SDK at: $SDK"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
+          echo "sdk.dir=$SDK" > local.properties
+          # Install platform 34 if not present
+          SDKMAN=$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)
+          if [ -n "$SDKMAN" ]; then
+            yes | "$SDKMAN" --licenses --sdk_root="$SDK" 2>/dev/null || true
+            "$SDKMAN" --sdk_root="$SDK" "platforms;android-34" "build-tools;34.0.0" 2>/dev/null || true
+          fi
+
+      # ── Gradle ────────────────────────────────────────────────
       - name: Download Gradle 8.4
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/
-          echo "GRADLE=/tmp/gradle-8.4/bin/gradle" >> $GITHUB_ENV
+          chmod +x /tmp/gradle-8.4/bin/gradle
+          echo "GRADLE_BIN=/tmp/gradle-8.4/bin/gradle" >> $GITHUB_ENV
 
-      # ── 3. 圖示 ────────────────────────────────────────────────
+      # ── Icons ─────────────────────────────────────────────────
       - name: Prepare icons
         run: |
           for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
             mkdir -p app/src/main/res/$d
           done
-          # 從已上線的 backend 下載圖示
           curl -sf -o /tmp/icon.png https://btryit123.zeabur.app/icons/icon-512.png \
             || convert -size 192x192 xc:#9333ea /tmp/icon.png
           for d in mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
@@ -56,7 +85,7 @@ jobs:
             cp /tmp/icon.png app/src/main/res/$d/ic_launcher_round.png
           done
 
-      # ── 4. Keystore ────────────────────────────────────────────
+      # ── Keystore ──────────────────────────────────────────────
       - name: Prepare keystore
         run: |
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
@@ -70,34 +99,36 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=DoReMi KTV, O=DoReMi, C=TW" \
               -storepass doremi123 -keypass doremi123 2>/dev/null
-            echo "KS_PASS=doremi123"   >> $GITHUB_ENV
+            echo "KS_PASS=doremi123"    >> $GITHUB_ENV
             echo "KEY_ALIAS=doremi-ktv" >> $GITHUB_ENV
             echo "KEY_PASS=doremi123"   >> $GITHUB_ENV
           fi
 
       - name: Print SHA-256 fingerprint
         run: |
-          echo "=== SHA-256 (貼到 Zeabur APK_SHA256 環境變數) ==="
+          echo "=== SHA-256 (填入 Zeabur APK_SHA256) ==="
           keytool -list -v \
             -keystore app/release.keystore \
             -alias $KEY_ALIAS \
-            -storepass $KS_PASS 2>/dev/null | grep "SHA256:"
+            -storepass $KS_PASS 2>/dev/null | grep "SHA256:" || echo "Cannot print fingerprint"
 
-      # ── 5. Build ───────────────────────────────────────────────
+      # ── Build ─────────────────────────────────────────────────
       - name: Build Release APK
         run: |
-          $GRADLE :app:assembleRelease \
+          $GRADLE_BIN :app:assembleRelease \
             --no-daemon \
-            --stacktrace \
+            --info \
             -Pandroid.useAndroidX=true
         env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
           KEYSTORE_PATH: release.keystore
           KEYSTORE_PASSWORD: ${{ env.KS_PASS }}
           KEY_ALIAS: ${{ env.KEY_ALIAS }}
           KEY_PASSWORD: ${{ env.KEY_PASS }}
 
-      # ── 6. 上傳 Artifact ───────────────────────────────────────
+      # ── Upload ────────────────────────────────────────────────
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: DoReMi-KTV-v${{ github.run_number }}
           path: app/build/outputs/apk/release/*.apk
